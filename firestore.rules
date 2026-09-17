@@ -1,0 +1,122 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net: Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- REUSABLE SECURITY PRIMITIVES ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isVerifiedUser() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    // --- ENTITY SCHEMA VALIDATORS ---
+    function isValidUser(data) {
+      return data.keys().hasAll(['email', 'createdAt'])
+        && data.keys().size() == 2
+        && data.email is string
+        && data.email.size() > 0
+        && data.email.size() <= 256
+        && data.createdAt is timestamp
+        && data.createdAt == request.time;
+    }
+
+    function isValidShow(data) {
+      return data.keys().hasAll([
+        'userId', 'title', 'duration', 'summary', 'date', 'host',
+        'coverImage', 'audioUrl', 'transcript', 'createdAt', 'updatedAt'
+      ])
+        && data.userId is string
+        && data.userId.size() > 0
+        && data.userId.size() <= 128
+        && data.title is string
+        && data.title.size() > 0
+        && data.title.size() <= 256
+        && data.duration is number
+        && data.duration >= 0
+        && data.summary is string
+        && data.summary.size() > 0
+        && data.summary.size() <= 2000
+        && data.date is string
+        && data.date.size() > 0
+        && data.date.size() <= 32
+        && data.host is string
+        && data.host.size() > 0
+        && data.host.size() <= 128
+        && data.coverImage is string
+        && data.coverImage.size() > 0
+        && data.coverImage.size() <= 2048
+        && data.audioUrl is string
+        && data.audioUrl.size() > 0
+        && data.audioUrl.size() <= 2048
+        && data.transcript is list
+        && data.transcript.size() <= 500
+        && (data.transcript.size() == 0 || data.transcript[0] is map)
+        && (!data.keys().contains('notesUrl') || (data.notesUrl is string && data.notesUrl.size() <= 2048))
+        && (!data.keys().contains('shareId') || (data.shareId is string && data.shareId.size() <= 128))
+        && (!data.keys().contains('shareUrl') || (data.shareUrl is string && data.shareUrl.size() <= 2048))
+        && (!data.keys().contains('isUserGenerated') || data.isUserGenerated is bool)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // --- PATH-SPECIFIC ACCESS RULES ---
+
+    // 1. User profiles collection
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser(incoming());
+      allow update: if isOwner(userId)
+        && isValidUser(incoming())
+        && incoming().createdAt == resource.data.createdAt
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['email']);
+    }
+
+    // 2. Shows collection
+    match /shows/{showId} {
+      allow get: if isVerifiedUser() && resource.data.userId == request.auth.uid;
+      
+      // Query Enforcer (Pillar 8): The rule itself validates resource.data.userId
+      allow list: if isVerifiedUser() && resource.data.userId == request.auth.uid;
+
+      allow create: if isVerifiedUser()
+        && isValidId(showId)
+        && isValidShow(incoming())
+        && incoming().userId == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow delete: if isVerifiedUser()
+        && resource.data.userId == request.auth.uid;
+
+      allow update: if isVerifiedUser()
+        && resource.data.userId == request.auth.uid
+        && isValidShow(incoming())
+        && incoming().userId == resource.data.userId
+        && incoming().createdAt == resource.data.createdAt
+        && incoming().updatedAt == request.time
+        // Action-Based updates or safe field modifications
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'title', 'summary', 'shareId', 'shareUrl', 'duration', 'updatedAt'
+        ]);
+    }
+  }
+}

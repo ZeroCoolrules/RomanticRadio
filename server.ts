@@ -134,7 +134,7 @@ function cleanUpOldGenerations() {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   // Run initial cleanup on startup
   cleanUpOldGenerations();
@@ -647,7 +647,7 @@ async function startServer() {
       }
     }
 
-    const prompt = `Generate a radio station about: ${topic}. Target duration: ${duration} minutes. Set the tone and style of the show to: ${mood}. Follow the workflow in AGENTS.md to research, write, generate speech and music, mix the audio, and generate the metadata.`;
+    const prompt = `Generate a radio station about: ${topic}. Target duration: ${duration} minutes. Set the tone and style of the show to: ${mood}. Follow the workflow in AGENTS.md to research, write a script, generate audio, and create show_notes.json.`;
 
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
@@ -725,7 +725,7 @@ async function startServer() {
           displayMessage.toLowerCase().includes("too_many_requests");
 
         if (isQuotaError) {
-          displayMessage = `Gemini API Quota Limit Reached: ${displayMessage}. The shared free-tier Google Gemini API Key has run out of request quota. To resolve this, go to Settings > Secrets inside AI Studio to verify your personal Gemini API key or set up billing.`;
+          displayMessage = `Gemini API Quota Limit Reached: ${displayMessage}. The shared free-tier Google Gemini API Key has run out of request quota. To resolve this, go to Settings > Secrets in AI Studio and add your own Gemini API Key.`;
         }
 
         sendEvent({ type: "error", message: displayMessage });
@@ -750,7 +750,7 @@ async function startServer() {
           console.log(`[generate-show] Interaction completed. Extracted environment ID: "${envId}"`);
           const usage = event.interaction?.usage as any;
           if (usage) {
-            console.log(`[agent] Token usage: ${usage.total_tokens} total tokens (${usage.total_input_tokens} input, ${usage.total_output_tokens} output, ${usage.total_thought_tokens || 0} thought, ${usage.total_cached_tokens || 0} cached)`);
+            console.log(`[agent] Token usage: ${usage.total_tokens} total tokens (${usage.total_input_tokens} input, ${usage.total_output_tokens} output, ${usage.total_thought_tokens || 0} thought tokens)`);
           }
 
           // Fallback extraction: iterate and combine text from all elements of the steps array 
@@ -774,7 +774,7 @@ async function startServer() {
               }
             }
             if (combinedStepsText && combinedStepsText.length > accumulatedText.length) {
-              console.log(`[generate-show] Dynamic steps recovery: Reconstructed text of length ${combinedStepsText.length} exceeds accumulated text of length ${accumulatedText.length}. Restoring fallback text.`);
+              console.log(`[generate-show] Dynamic steps recovery: Reconstructed text of length ${combinedStepsText.length} exceeds accumulated text of length ${accumulatedText.length}. Restoring.`);
               accumulatedText = combinedStepsText;
             }
           }
@@ -1026,6 +1026,7 @@ async function startServer() {
 
   const startListening = (port: number) => {
     const server = http.createServer(app);
+    // The WebSocket server shares this HTTP server, so it listens on the same port.
     const wss = new WebSocketServer({ server, path: '/live' });
 
     // Live API Bridge
